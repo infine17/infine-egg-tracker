@@ -13,6 +13,7 @@ const SOURCE_CHANNEL_ID = process.env.SOURCE_CHANNEL_ID;
 
 const GITHUB_BASE = 'https://raw.githubusercontent.com/infine17/infine-egg-tracker/main/';
 
+// Exact casing and URL encoding mapped to your repository files
 const PET_IMAGES = {
   'archangel': 'Arch%20Angel.jfif',
   'centaur': 'Centaur.jfif',
@@ -29,11 +30,11 @@ const PET_IMAGES = {
   'kraken': 'Kraken.jfif',
   'lavadragon': 'Lava%20Dragon.jfif',
   'pegasus': 'Pegasus.jfif',
-  'mosasaurus': 'mosasaurus.jfif',
+  'mosasaurus': 'mosasaurus.jfif', // exact lowercase m
   'nightflame': 'Night%20Flame.jfif',
   'onitiger': 'Oni%20Tiger.jfif',
+  'phoenix': 'Pheonix.jfif', // maps standard spelling to uploaded file
   'pheonix': 'Pheonix.jfif',
-  'phoenix': 'Pheonix.jfif',
   'razorfang': 'Razor%20Fang.jfif',
   'trex': 'Trex.jfif',
   'skeletonboss': 'Skeleton%20Boss.jfif',
@@ -42,13 +43,12 @@ const PET_IMAGES = {
   'stag': 'Stag.jfif',
   'tralaledon': 'Tralaledon.jfif',
   'unicorn': 'Unicorn.jfif',
-  'worldburner': 'World%20burner.jfif',
+  'worldburner': 'World%20burner.jfif', // exact lowercase b
   'yeti': 'Yeti.jfif'
 };
 
 const DEFAULT_ICON = 'https://cdn-icons-png.flaticon.com/512/833/833593.png';
 
-// In-memory cache to prevent duplicate alerts
 const seenMessages = new Set();
 
 client.on('ready', () => {
@@ -59,7 +59,7 @@ client.on('messageCreate', async (message) => {
   if (message.channelId !== SOURCE_CHANNEL_ID) return;
   if (!message.embeds || message.embeds.length === 0) return;
 
-  // Drop duplicates
+  // Prevent duplicate sends during rolling reloads
   if (seenMessages.has(message.id)) return;
   seenMessages.add(message.id);
   if (seenMessages.size > 100) {
@@ -78,10 +78,10 @@ client.on('messageCreate', async (message) => {
       rawText += '\n' + original.fields.map(f => f.name + ': ' + f.value).join('\n');
     }
 
-    // 1. Strip custom Discord emojis & bold markdown
+    // 1. Strip emojis and formatting
     let cleanText = rawText.replace(/<a?:[a-zA-Z0-9_]+:[0-9]+>/g, '').replace(/\*\*/g, '').replace(/__/g, '');
 
-    // 2. Targeted regex extractions
+    // 2. Extract stats
     const eggMatch = cleanText.match(/(?:^|\n|[^\w])Egg:\s*([^\n\r]+)/i);
     const locMatch = cleanText.match(/Location:\s*([^\n\r]+)/i);
     const spawnMatch = cleanText.match(/Spawned:\s*([^\n\r]+)/i);
@@ -96,7 +96,7 @@ client.on('messageCreate', async (message) => {
     const speed = speedMatch ? speedMatch[1].trim() : 'N/A';
     const gameUrl = urlMatch ? urlMatch[0] : null;
 
-    // Dynamic Rarity Colors
+    // 3. Dynamic Rarity Border Color
     let embedColor = '#FFFFFF';
     const titleLower = (original.title ? original.title : '').toLowerCase();
     const fullLower = cleanText.toLowerCase();
@@ -109,7 +109,7 @@ client.on('messageCreate', async (message) => {
       embedColor = '#A855F7';
     }
 
-    // Normalized Space-Free Image Matching
+    // 4. Match clean demon thumbnail (stripping spaces & symbols)
     const lookupKey = eggName.toLowerCase().replace(/[^a-z0-9]/g, '');
     let selectedImage = DEFAULT_ICON;
 
@@ -120,7 +120,7 @@ client.on('messageCreate', async (message) => {
       }
     }
 
-    // Build Clean Esports Card
+    // 5. Build clean Esports embed
     const esportsEmbed = new MessageEmbed()
       .setTitle('🥚 Rare Spawn: ' + eggName + ' Egg')
       .setColor(embedColor)
@@ -134,7 +134,7 @@ client.on('messageCreate', async (message) => {
       .setFooter({ text: 'Infine v1 • Steal An Egg Tracker' })
       .setTimestamp();
 
-    // Attach Clickable Join Button
+    // 6. Direct Join Game button
     const components = [];
     if (gameUrl) {
       components.push(
