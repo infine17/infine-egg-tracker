@@ -60,7 +60,6 @@ client.on('messageCreate', async (message) => {
   try {
     const original = message.embeds[0];
 
-    // Clean text compilation avoiding template syntax bugs
     let descText = original.description ? original.description : '';
     let contentText = message.content ? message.content : '';
     let rawText = descText + '\n' + contentText;
@@ -69,12 +68,18 @@ client.on('messageCreate', async (message) => {
       rawText += '\n' + original.fields.map(f => f.name + ': ' + f.value).join('\n');
     }
 
-    // Regex matchers
-    const eggMatch = rawText.match(/Egg:\s*([^\n\r]+)/i);
-    const locMatch = rawText.match(/Location:\s*([^\n\r]+)/i);
-    const spawnMatch = rawText.match(/Spawned:\s*([^\n\r]+)/i);
-    const moneyMatch = rawText.match(/Money:\s*([^\n\r]+)/i);
-    const speedMatch = rawText.match(/(?:Recommended\s+)?Speed:\s*([^\n\r]+)/i);
+    // 1. Strip all Discord custom emojis (<:name:id> or <a:name:id>)
+    let cleanText = rawText.replace(/<a?:[a-zA-Z0-9_]+:[0-9]+>/g, '');
+
+    // 2. Strip bold markdown stars and underscores
+    cleanText = cleanText.replace(/\*\*/g, '').replace(/__/g, '');
+
+    // 3. Clean targeted regex extractions
+    const eggMatch = cleanText.match(/(?:^|\n|[^\w])Egg:\s*([^\n\r]+)/i);
+    const locMatch = cleanText.match(/Location:\s*([^\n\r]+)/i);
+    const spawnMatch = cleanText.match(/Spawned:\s*([^\n\r]+)/i);
+    const moneyMatch = cleanText.match(/Money:\s*([^\n\r]+?)(?=(?:Recommended\s+)?Speed:|$)/i);
+    const speedMatch = cleanText.match(/(?:Recommended\s+)?Speed:\s*([^\n\r]+)/i);
     const urlMatch = rawText.match(/https?:\/\/[^\s\)\>]+/);
 
     const eggName = eggMatch ? eggMatch[1].replace(/egg/gi, '').trim() : 'Rare';
@@ -84,10 +89,10 @@ client.on('messageCreate', async (message) => {
     const speed = speedMatch ? speedMatch[1].trim() : 'N/A';
     const gameUrl = urlMatch ? urlMatch[0] : null;
 
-    // Rarity Border Color
+    // Dynamic Rarity Border Color
     let embedColor = '#FFFFFF';
     const titleLower = (original.title ? original.title : '').toLowerCase();
-    const fullLower = rawText.toLowerCase();
+    const fullLower = cleanText.toLowerCase();
 
     if (titleLower.includes('divine') || fullLower.includes('divine')) {
       embedColor = '#FFD700';
@@ -122,7 +127,7 @@ client.on('messageCreate', async (message) => {
       .setFooter({ text: 'Infine v1 • Steal An Egg Tracker' })
       .setTimestamp();
 
-    // Attach Clickable Roblox Link Button
+    // Attach Clickable Join Game Button
     const components = [];
     if (gameUrl) {
       components.push(
