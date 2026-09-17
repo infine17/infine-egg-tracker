@@ -68,28 +68,28 @@ client.on('messageCreate', async (message) => {
       rawText += '\n' + original.fields.map(f => f.name + ': ' + f.value).join('\n');
     }
 
-    // 1. Strip all Discord custom emojis (<:name:id> or <a:name:id>)
+    // 1. Strip custom Discord emojis
     let cleanText = rawText.replace(/<a?:[a-zA-Z0-9_]+:[0-9]+>/g, '');
 
-    // 2. Strip bold markdown stars and underscores
+    // 2. Strip bold and underline markdown
     cleanText = cleanText.replace(/\*\*/g, '').replace(/__/g, '');
 
-    // 3. Clean targeted regex extractions
+    // 3. Targeted regex extractions
     const eggMatch = cleanText.match(/(?:^|\n|[^\w])Egg:\s*([^\n\r]+)/i);
     const locMatch = cleanText.match(/Location:\s*([^\n\r]+)/i);
     const spawnMatch = cleanText.match(/Spawned:\s*([^\n\r]+)/i);
-    const moneyMatch = cleanText.match(/Money:\s*([^\n\r]+?)(?=(?:Recommended\s+)?Speed:|$)/i);
+    const moneyMatch = cleanText.match(/Money:\s*([^\n\r]+)/i);
     const speedMatch = cleanText.match(/(?:Recommended\s+)?Speed:\s*([^\n\r]+)/i);
     const urlMatch = rawText.match(/https?:\/\/[^\s\)\>]+/);
 
     const eggName = eggMatch ? eggMatch[1].replace(/egg/gi, '').trim() : 'Rare';
     const location = locMatch ? locMatch[1].trim() : 'Unknown';
     const spawned = spawnMatch ? spawnMatch[1].trim() : 'Just now';
-    const income = moneyMatch ? moneyMatch[1].trim() : 'N/A';
+    const income = moneyMatch ? moneyMatch[1].split(/recommended|speed/i)[0].trim() : 'N/A';
     const speed = speedMatch ? speedMatch[1].trim() : 'N/A';
     const gameUrl = urlMatch ? urlMatch[0] : null;
 
-    // Dynamic Rarity Border Color
+    // Dynamic Rarity Colors
     let embedColor = '#FFFFFF';
     const titleLower = (original.title ? original.title : '').toLowerCase();
     const fullLower = cleanText.toLowerCase();
@@ -113,7 +113,7 @@ client.on('messageCreate', async (message) => {
       }
     }
 
-    // Build the Clean Esports Card
+    // Build Esports Card
     const esportsEmbed = new MessageEmbed()
       .setTitle('🥚 Rare Spawn: ' + eggName + ' Egg')
       .setColor(embedColor)
@@ -127,7 +127,7 @@ client.on('messageCreate', async (message) => {
       .setFooter({ text: 'Infine v1 • Steal An Egg Tracker' })
       .setTimestamp();
 
-    // Attach Clickable Join Game Button
+    // Attach Clickable Join Button
     const components = [];
     if (gameUrl) {
       components.push(
