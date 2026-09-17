@@ -11,10 +11,8 @@ const client = new Client({ checkUpdate: false });
 const webhook = new WebhookClient({ url: process.env.WEBHOOK_URL });
 const SOURCE_CHANNEL_ID = process.env.SOURCE_CHANNEL_ID;
 
-// Base Raw URL for your repo
 const GITHUB_BASE = 'https://raw.githubusercontent.com/infine17/infine-egg-tracker/main/';
 
-// Mapping dictionary matching all your uploaded .jfif files
 const PET_IMAGES = {
   'arch angel': 'Arch%20Angel.jfif',
   'centaur': 'Centaur.jfif',
@@ -62,39 +60,36 @@ client.on('messageCreate', async (message) => {
   try {
     const original = message.embeds[0];
 
-    let eggName = 'Unknown';
-    let location = 'Unknown';
-    let spawned = 'Just now';
-    let income = 'N/A';
-    let speed = 'N/A';
-    let gameUrl = null;
-
-    if (original.fields) {
-      for (const field of original.fields) {
-        const name = field.name.toLowerCase();
-        const val = field.value;
-
-        if (name.includes('egg')) eggName = val.replace(/egg/gi, '').trim();
-        if (name.includes('location')) location = val.trim();
-        if (name.includes('spawned')) spawned = val.trim();
-        if (name.includes('money')) income = val.trim();
-        if (name.includes('speed')) speed = val.trim();
-        if (name.includes('join')) {
-          const match = val.match(/https?:\/\/[^\s\)]+/);
-          if (match) gameUrl = match[0];
-        }
-      }
+    // Combine all possible text sources into one string to search
+    let rawText = `${original.description \vert{}\vert{} ''}\n${message.content || ''}`;
+    if (original.fields && original.fields.length > 0) {
+      rawText += '\n' + original.fields.map(f => `${f.name}:${f.value}`).join('\n');
     }
 
-    // Dynamic Rarity Colors
-    let embedColor = '#FFFFFF';
-    const titleText = (original.title || '').toLowerCase();
-    if (titleText.includes('divine')) embedColor = '#FFD700';
-    else if (titleText.includes('eternal')) embedColor = '#00F0FF';
-    else if (titleText.includes('secret')) embedColor = '#A855F7';
+    // Regex extraction to cleanly grab stats regardless of emojis or formatting
+    const eggMatch = rawText.match(/Egg:\s*([^\n\r]+)/i);
+    const locMatch = rawText.match(/Location:\s*([^\n\r]+)/i);
+    const spawnMatch = rawText.match(/Spawned:\s*([^\n\r]+)/i);
+    const moneyMatch = rawText.match(/Money:\s*([^\n\r]+)/i);
+    const speedMatch = rawText.match(/(?:Recommended\s+)?Speed:\s*([^\n\r]+)/i);
+    const urlMatch = rawText.match(/https?:\/\/[^\s\)\>]+/);
 
-    // Locate clean custom image
-    const lookupKey = eggName.toLowerCase();
+    const eggName = eggMatch ? eggMatch[1].replace(/egg/gi, '').trim() : 'Rare';
+    const location = locMatch ? locMatch[1].trim() : 'Unknown';
+    const spawned = spawnMatch ? spawnMatch[1].trim() : 'Just now';
+    const income = moneyMatch ? moneyMatch[1].trim() : 'N/A';
+    const speed = speedMatch ? speedMatch[1].trim() : 'N/A';
+    const gameUrl = urlMatch ? urlMatch[0] : null;
+
+    // Rarity Border Color
+    let embedColor = '#FFFFFF';
+    const searchTarget = `${original.title \vert{}\vert{} ''}${message.content || ''}`.toLowerCase();
+    if (searchTarget.includes('divine')) embedColor = '#FFD700';
+    else if (searchTarget.includes('eternal')) embedColor = '#00F0FF';
+    else if (searchTarget.includes('secret')) embedColor = '#A855F7';
+
+    // Match Clean Demon Image
+    const lookupKey = eggName.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
     let selectedImage = DEFAULT_ICON;
 
     for (const [key, filename] of Object.entries(PET_IMAGES)) {
@@ -104,7 +99,7 @@ client.on('messageCreate', async (message) => {
       }
     }
 
-    // Build Clean Esports Embed
+    // Build the Clean Esports Card
     const esportsEmbed = new MessageEmbed()
       .setTitle(`🥚 Rare Spawn: ${eggName} Egg`)
       .setColor(embedColor)
@@ -118,7 +113,7 @@ client.on('messageCreate', async (message) => {
       .setFooter({ text: 'Infine v1 • Steal An Egg Tracker' })
       .setTimestamp();
 
-    // Link Button for Roblox
+    // Attach Clickable Roblox Link Button
     const components = [];
     if (gameUrl) {
       components.push(
