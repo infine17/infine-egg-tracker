@@ -14,40 +14,42 @@ const SOURCE_CHANNEL_ID = process.env.SOURCE_CHANNEL_ID;
 const GITHUB_BASE = 'https://raw.githubusercontent.com/infine17/infine-egg-tracker/main/';
 
 const PET_IMAGES = {
-  'arch angel': 'Arch%20Angel.jfif',
+  'archangel': 'Arch%20Angel.jfif',
   'centaur': 'Centaur.jfif',
   'cerberus': 'Cerberus.jfif',
-  'cosmic dragon': 'Cosmic%20Dragon.jfif',
-  'el maja': 'El%20Maja.jfif',
-  'ice dragon': 'Ice%20Dragon.jfif',
+  'cosmicdragon': 'Cosmic%20Dragon.jfif',
+  'elmaja': 'El%20Maja.jfif',
+  'icedragon': 'Ice%20Dragon.jfif',
   'gargoyle': 'Gargoyle.jfif',
-  'gorilla king': 'Gorilla%20King.jfif',
+  'gorillaking': 'Gorilla%20King.jfif',
   'kitsune': 'Kitsune.jfif',
-  'pure jellyfish': 'Jelly%20fish.jfif',
-  'jelly fish': 'Jelly%20fish.jfif',
-  'lunar dragon': 'Lunar%20Dragon.jfif',
+  'purejellyfish': 'Jelly%20fish.jfif',
+  'jellyfish': 'Jelly%20fish.jfif',
+  'lunardragon': 'Lunar%20Dragon.jfif',
   'kraken': 'Kraken.jfif',
-  'lava dragon': 'Lava%20Dragon.jfif',
+  'lavadragon': 'Lava%20Dragon.jfif',
   'pegasus': 'Pegasus.jfif',
   'mosasaurus': 'mosasaurus.jfif',
-  'night flame': 'Night%20Flame.jfif',
-  'oni tiger': 'Oni%20Tiger.jfif',
+  'nightflame': 'Night%20Flame.jfif',
+  'onitiger': 'Oni%20Tiger.jfif',
   'pheonix': 'Pheonix.jfif',
   'phoenix': 'Pheonix.jfif',
-  'razor fang': 'Razor%20Fang.jfif',
+  'razorfang': 'Razor%20Fang.jfif',
   'trex': 'Trex.jfif',
-  't-rex': 'Trex.jfif',
-  'skeleton boss': 'Skeleton%20Boss.jfif',
-  'skeleton horse': 'Skeleton%20Horse.jfif',
-  'snake king': 'Snake%20King.jfif',
+  'skeletonboss': 'Skeleton%20Boss.jfif',
+  'skeletonhorse': 'Skeleton%20Horse.jfif',
+  'snakeking': 'Snake%20King.jfif',
   'stag': 'Stag.jfif',
   'tralaledon': 'Tralaledon.jfif',
   'unicorn': 'Unicorn.jfif',
-  'world burner': 'World%20burner.jfif',
+  'worldburner': 'World%20burner.jfif',
   'yeti': 'Yeti.jfif'
 };
 
 const DEFAULT_ICON = 'https://cdn-icons-png.flaticon.com/512/833/833593.png';
+
+// In-memory cache to prevent duplicate alerts
+const seenMessages = new Set();
 
 client.on('ready', () => {
   console.log('Esports tracker active as: ' + client.user.tag);
@@ -56,6 +58,14 @@ client.on('ready', () => {
 client.on('messageCreate', async (message) => {
   if (message.channelId !== SOURCE_CHANNEL_ID) return;
   if (!message.embeds || message.embeds.length === 0) return;
+
+  // Drop duplicates
+  if (seenMessages.has(message.id)) return;
+  seenMessages.add(message.id);
+  if (seenMessages.size > 100) {
+    const firstItem = seenMessages.values().next().value;
+    seenMessages.delete(firstItem);
+  }
 
   try {
     const original = message.embeds[0];
@@ -68,13 +78,10 @@ client.on('messageCreate', async (message) => {
       rawText += '\n' + original.fields.map(f => f.name + ': ' + f.value).join('\n');
     }
 
-    // 1. Strip custom Discord emojis
-    let cleanText = rawText.replace(/<a?:[a-zA-Z0-9_]+:[0-9]+>/g, '');
+    // 1. Strip custom Discord emojis & bold markdown
+    let cleanText = rawText.replace(/<a?:[a-zA-Z0-9_]+:[0-9]+>/g, '').replace(/\*\*/g, '').replace(/__/g, '');
 
-    // 2. Strip bold and underline markdown
-    cleanText = cleanText.replace(/\*\*/g, '').replace(/__/g, '');
-
-    // 3. Targeted regex extractions
+    // 2. Targeted regex extractions
     const eggMatch = cleanText.match(/(?:^|\n|[^\w])Egg:\s*([^\n\r]+)/i);
     const locMatch = cleanText.match(/Location:\s*([^\n\r]+)/i);
     const spawnMatch = cleanText.match(/Spawned:\s*([^\n\r]+)/i);
@@ -102,8 +109,8 @@ client.on('messageCreate', async (message) => {
       embedColor = '#A855F7';
     }
 
-    // Match Clean Demon Image
-    const lookupKey = eggName.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
+    // Normalized Space-Free Image Matching
+    const lookupKey = eggName.toLowerCase().replace(/[^a-z0-9]/g, '');
     let selectedImage = DEFAULT_ICON;
 
     for (const [key, filename] of Object.entries(PET_IMAGES)) {
@@ -113,7 +120,7 @@ client.on('messageCreate', async (message) => {
       }
     }
 
-    // Build Esports Card
+    // Build Clean Esports Card
     const esportsEmbed = new MessageEmbed()
       .setTitle('🥚 Rare Spawn: ' + eggName + ' Egg')
       .setColor(embedColor)
