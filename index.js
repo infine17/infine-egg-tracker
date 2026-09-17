@@ -50,7 +50,7 @@ const PET_IMAGES = {
 const DEFAULT_ICON = 'https://cdn-icons-png.flaticon.com/512/833/833593.png';
 
 client.on('ready', () => {
-  console.log(`Esports tracker active as: ${client.user.tag}`);
+  console.log('Esports tracker active as: ' + client.user.tag);
 });
 
 client.on('messageCreate', async (message) => {
@@ -60,13 +60,16 @@ client.on('messageCreate', async (message) => {
   try {
     const original = message.embeds[0];
 
-    // Combine all possible text sources into one string to search
-    let rawText = `${original.description \vert{}\vert{} ''}\n${message.content || ''}`;
+    // Clean text compilation avoiding template syntax bugs
+    let descText = original.description ? original.description : '';
+    let contentText = message.content ? message.content : '';
+    let rawText = descText + '\n' + contentText;
+
     if (original.fields && original.fields.length > 0) {
-      rawText += '\n' + original.fields.map(f => `${f.name}:${f.value}`).join('\n');
+      rawText += '\n' + original.fields.map(f => f.name + ': ' + f.value).join('\n');
     }
 
-    // Regex extraction to cleanly grab stats regardless of emojis or formatting
+    // Regex matchers
     const eggMatch = rawText.match(/Egg:\s*([^\n\r]+)/i);
     const locMatch = rawText.match(/Location:\s*([^\n\r]+)/i);
     const spawnMatch = rawText.match(/Spawned:\s*([^\n\r]+)/i);
@@ -83,10 +86,16 @@ client.on('messageCreate', async (message) => {
 
     // Rarity Border Color
     let embedColor = '#FFFFFF';
-    const searchTarget = `${original.title \vert{}\vert{} ''}${message.content || ''}`.toLowerCase();
-    if (searchTarget.includes('divine')) embedColor = '#FFD700';
-    else if (searchTarget.includes('eternal')) embedColor = '#00F0FF';
-    else if (searchTarget.includes('secret')) embedColor = '#A855F7';
+    const titleLower = (original.title ? original.title : '').toLowerCase();
+    const fullLower = rawText.toLowerCase();
+
+    if (titleLower.includes('divine') || fullLower.includes('divine')) {
+      embedColor = '#FFD700';
+    } else if (titleLower.includes('eternal') || fullLower.includes('eternal')) {
+      embedColor = '#00F0FF';
+    } else if (titleLower.includes('secret') || fullLower.includes('secret')) {
+      embedColor = '#A855F7';
+    }
 
     // Match Clean Demon Image
     const lookupKey = eggName.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
@@ -94,20 +103,20 @@ client.on('messageCreate', async (message) => {
 
     for (const [key, filename] of Object.entries(PET_IMAGES)) {
       if (lookupKey.includes(key) || key.includes(lookupKey)) {
-        selectedImage = `${GITHUB_BASE}${filename}`;
+        selectedImage = GITHUB_BASE + filename;
         break;
       }
     }
 
     // Build the Clean Esports Card
     const esportsEmbed = new MessageEmbed()
-      .setTitle(`🥚 Rare Spawn: ${eggName} Egg`)
+      .setTitle('🥚 Rare Spawn: ' + eggName + ' Egg')
       .setColor(embedColor)
       .addFields(
-        { name: '📍 Location', value: `\`${location}\``, inline: true },
-        { name: '💵 Income', value: `\`${income}\``, inline: true },
-        { name: '⚡ Req. Speed', value: `\`${speed}\``, inline: true },
-        { name: '⏱️ Spawned', value: `${spawned}`, inline: true }
+        { name: '📍 Location', value: '`' + location + '`', inline: true },
+        { name: '💵 Income', value: '`' + income + '`', inline: true },
+        { name: '⚡ Req. Speed', value: '`' + speed + '`', inline: true },
+        { name: '⏱️ Spawned', value: spawned, inline: true }
       )
       .setThumbnail(selectedImage)
       .setFooter({ text: 'Infine v1 • Steal An Egg Tracker' })
