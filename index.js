@@ -1,11 +1,15 @@
+// 1. Force Discord Voice to use the bundled ffmpeg binary on Render
+const ffmpeg = require('ffmpeg-static');
+process.env.FFMPEG_PATH = ffmpeg;
+
 const { Client, WebhookClient, MessageEmbed, MessageActionRow, MessageButton } = require('discord.js-selfbot-v13');
-const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
+const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, entersState, VoiceConnectionStatus } = require('@discordjs/voice');
 const http = require('http');
 require('dotenv').config();
 
 http.createServer((req, res) => {
   res.writeHead(200);
-  res.end('Infine v1 Dual Engine (Voice Dispatch + HUD) active.');
+  res.end('Infine v1 Voice Dispatch Active');
 }).listen(process.env.PORT || 8000);
 
 const client = new Client({ checkUpdate: false });
@@ -14,8 +18,8 @@ const webhook = new WebhookClient({ url: process.env.WEBHOOK_URL });
 const SOURCE_CHANNEL_ID = process.env.SOURCE_CHANNEL_ID;
 const VOICE_CHANNEL_ID = process.env.VOICE_CHANNEL_ID;
 
-// Fast tactical alert tone (2 seconds)
-const SIREN_AUDIO_URL = 'https://cdn.freesound.org/previews/369/369840_6687661-lq.mp3';
+// Short tactical beep chime (1 second)
+const RADAR_CHIME_URL = 'https://www.soundjay.com/buttons/sounds/beep-01a.mp3';
 const GITHUB_BASE = 'https://raw.githubusercontent.com/infine17/infine-egg-tracker/main/';
 
 const PET_IMAGES = {
@@ -59,7 +63,7 @@ client.on('ready', () => {
   console.log('Infine v1 Voice Dispatch active as: ' + client.user.tag);
 });
 
-// Chained Audio Routine: Siren -> Dynamic Voice Announcement -> Disconnect
+// Robust Voice Routine: Chime -> Spoken Announcement -> Disconnect
 async function triggerVoiceAlert(eggName, rarityTier, location) {
   if (!VOICE_CHANNEL_ID) return;
 
@@ -67,46 +71,50 @@ async function triggerVoiceAlert(eggName, rarityTier, location) {
     const vc = await client.channels.fetch(VOICE_CHANNEL_ID);
     if (!vc || !vc.isVoice()) return;
 
+    // Join without deafen or mute icons
     const connection = joinVoiceChannel({
       channelId: vc.id,
       guildId: vc.guild.id,
       adapterCreator: vc.guild.voiceAdapterCreator,
+      selfDeaf: false,
+      selfMute: false
     });
+
+    await entersState(connection, VoiceConnectionStatus.Ready, 5000);
 
     const player = createAudioPlayer();
     connection.subscribe(player);
 
-    // Format spoken phrase (e.g. "Attention. Divine Ice Dragon egg sighted in Snow biome.")
+    // StreamElements TTS does not block cloud hosting IPs
     const spokenText = `Attention. ${rarityTier} ${eggName} egg sighted in ${location} biome.`;
-    const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en&q=${encodeURIComponent(spokenText)}`;
+    const ttsUrl = `https://api.streamelements.com/kappa/v2/speech?voice=Brian&text=${encodeURIComponent(spokenText)}`;
 
-    const audioPlaylist = [
-      createAudioResource(SIREN_AUDIO_URL),
-      createAudioResource(ttsUrl)
-    ];
+    // Play quick chime first
+    const chimeResource = createAudioResource(RADAR_CHIME_URL);
+    player.play(chimeResource);
 
-    // Play siren first
-    player.play(audioPlaylist.shift());
+    let ttsPlayed = false;
 
     player.on(AudioPlayerStatus.Idle, () => {
-      if (audioPlaylist.length > 0) {
-        // Siren finished: play the voice announcement
-        player.play(audioPlaylist.shift());
+      if (!ttsPlayed) {
+        ttsPlayed = true;
+        // Instantiate speech stream only when the chime finishes
+        const ttsResource = createAudioResource(ttsUrl);
+        player.play(ttsResource);
       } else {
-        // Both finished: leave VC cleanly
         setTimeout(() => {
           try { connection.destroy(); } catch (err) {}
-        }, 1200);
+        }, 1000);
       }
     });
 
     player.on('error', (err) => {
-      console.error('Audio stream error:', err);
+      console.error('Audio playback error:', err.message);
       try { connection.destroy(); } catch (e) {}
     });
 
   } catch (err) {
-    console.error('VC Voice Dispatch failed:', err);
+    console.error('VC Connection failed:', err.message);
   }
 }
 
@@ -132,7 +140,7 @@ client.on('messageCreate', async (message) => {
       rawText += '\n' + original.fields.map(f => f.name + ': ' + f.value).join('\n');
     }
 
-    // 1. Extract Roblox Link
+    // 1. Extract Roblox URL
     let gameUrl = null;
     if (message.components && message.components.length > 0) {
       for (const row of message.components) {
@@ -150,7 +158,7 @@ client.on('messageCreate', async (message) => {
       if (match) gameUrl = match[0];
     }
 
-    // 2. Parse Spawn Details
+    // 2. Parse Stats
     let cleanText = rawText.replace(/<a?:[a-zA-Z0-9_]+:[0-9]+>/g, '').replace(/\*\*/g, '').replace(/__/g, '');
     const eggMatch = cleanText.match(/(?:^|\n|[^\w])Egg:\s*([^\n\r]+)/i);
     const locMatch = cleanText.match(/Location:\s*([^\n\r]+)/i);
@@ -192,7 +200,7 @@ client.on('messageCreate', async (message) => {
       mentionRole = `<@&${process.env.PING_ROLE_ID}>`;
     }
 
-    // 4. Asset Matcher
+    // 4. Match Pet Image
     const lookupKey = eggName.toLowerCase().replace(/[^a-z0-9]/g, '');
     let selectedImage = DEFAULT_ICON;
     for (const [key, filename] of Object.entries(PET_IMAGES)) {
@@ -202,7 +210,7 @@ client.on('messageCreate', async (message) => {
       }
     }
 
-    // 5. Build Embed
+    // 5. Post Embed to Text Channel
     const joinText = gameUrl ? `[👉 **Click Here to Join Server**](${gameUrl})` : '*Link not detected*';
     const activeEmbed = new MessageEmbed()
       .setTitle('🥚 Rare Spawn: ' + eggName + ' Egg')
@@ -230,7 +238,6 @@ client.on('messageCreate', async (message) => {
       );
     }
 
-    // 6. Send Webhook Alert
     const postPayload = {
       username: 'Infine v1',
       embeds: [activeEmbed],
@@ -244,12 +251,12 @@ client.on('messageCreate', async (message) => {
 
     const sentMessage = await webhook.send(postPayload);
 
-    // 7. Fire Chained Voice Dispatch (Siren -> TTS)
+    // 6. Fire Voice Dispatch
     if (['Divine', 'Eternal', 'Secret'].includes(rarityTier)) {
       triggerVoiceAlert(eggName, rarityTier, location);
     }
 
-    // 8. Expire Message After 4m 30s
+    // 7. Auto-Expire Message After 4m 30s
     if (sentMessage && sentMessage.id) {
       setTimeout(async () => {
         try {
