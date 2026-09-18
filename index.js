@@ -62,20 +62,38 @@ client.on('ready', () => {
   console.log(`Infine v1 Voice Dispatch active as: ${client.user.tag}`);
 });
 
-// Download TTS audio to local file on Render disk
-function downloadAudio(url, destPath) {
+// Download TTS audio to Render disk with browser headers & redirect support
+function downloadAudio(targetUrl, destPath) {
   return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(destPath);
-    https.get(url, (response) => {
-      if (response.statusCode !== 200) {
-        return reject(new Error(`TTS stream failed with HTTP ${response.statusCode}`));
-      }
-      response.pipe(file);
-      file.on('finish', () => file.close(resolve));
-    }).on('error', (err) => {
-      fs.unlink(destPath, () => {});
-      reject(err);
-    });
+    const fetchStream = (urlStr) => {
+      const parsed = new URL(urlStr);
+      const req = https.get({
+        hostname: parsed.hostname,
+        path: parsed.pathname + parsed.search,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Referer': 'https://translate.google.com/'
+        }
+      }, (res) => {
+        // Follow Google 301/302 redirects automatically
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          return fetchStream(res.headers.location);
+        }
+        if (res.statusCode !== 200) {
+          return reject(new Error(`TTS stream failed with HTTP ${res.statusCode}`));
+        }
+        const file = fs.createWriteStream(destPath);
+        res.pipe(file);
+        file.on('finish', () => file.close(resolve));
+      });
+
+      req.on('error', (err) => {
+        fs.unlink(destPath, () => {});
+        reject(err);
+      });
+    };
+
+    fetchStream(targetUrl);
   });
 }
 
@@ -84,13 +102,13 @@ async function triggerVoiceAlert(eggName, rarityTier, location) {
   if (!VOICE_CHANNEL_ID) return;
 
   const audioPath = path.join(__dirname, 'alert.mp3');
-  const spokenText = `Attention. ${rarityTier} ${eggName} egg sighted in${location} biome.`;
-  const ttsUrl = `https://api.streamelements.com/kappa/v2/speech?voice=Brian&text=${encodeURIComponent(spokenText)}`;
+  const spokenText = `Alert. ${rarityTier} ${eggName} egg in${location}.`;
+  const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en&q=${encodeURIComponent(spokenText)}`;
 
   try {
-    console.log('[VC] Fetching audio file...');
+    console.log('[VC] Fetching speech audio...');
     await downloadAudio(ttsUrl, audioPath);
-    console.log('[VC] Audio cached locally.');
+    console.log('[VC] Speech audio cached.');
 
     const vc = await client.channels.fetch(VOICE_CHANNEL_ID);
     if (!vc || !vc.isVoice()) return;
@@ -108,15 +126,13 @@ async function triggerVoiceAlert(eggName, rarityTier, location) {
       console.log(`[VC State] ${oldState.status} ->${newState.status}`);
     });
 
-    // 35-second hard fail-safe to leave VC if anything hangs
     const emergencyTimeout = setTimeout(() => {
-      console.log('[VC] Safety timeout reached, leaving channel.');
+      console.log('[VC] Timeout reached, disconnecting.');
       try { connection.destroy(); } catch (e) {}
-    }, 35000);
+    }, 25000);
 
-    // Wait up to 20 seconds for Render's cloud connection to finish handshaking
     await entersState(connection, VoiceConnectionStatus.Ready, 20000);
-    console.log('[VC] Connection established. Playing audio...');
+    console.log('[VC] Connected. Broadcasting audio...');
 
     const player = createAudioPlayer();
     const resource = createAudioResource(audioPath);
@@ -125,7 +141,7 @@ async function triggerVoiceAlert(eggName, rarityTier, location) {
     player.play(resource);
 
     player.on(AudioPlayerStatus.Idle, () => {
-      console.log('[VC] Audio announcement finished.');
+      console.log('[VC] Announcement complete. Leaving channel.');
       clearTimeout(emergencyTimeout);
       setTimeout(() => {
         try { connection.destroy(); } catch (err) {}
@@ -165,7 +181,7 @@ client.on('messageCreate', async (message) => {
       rawText += '\n' + original.fields.map(f => f.name + ': ' + f.value).join('\n');
     }
 
-    // 1. Extract Roblox URL
+    // 1. Extract Roblox Link
     let gameUrl = null;
     if (message.components && message.components.length > 0) {
       for (const row of message.components) {
@@ -225,7 +241,7 @@ client.on('messageCreate', async (message) => {
       mentionRole = `<@&${process.env.PING_ROLE_ID}>`;
     }
 
-    // 4. Asset Matcher
+    // 4. Match Pet Image
     const lookupKey = eggName.toLowerCase().replace(/[^a-z0-9]/g, '');
     let selectedImage = DEFAULT_ICON;
     for (const [key, filename] of Object.entries(PET_IMAGES)) {
@@ -235,7 +251,7 @@ client.on('messageCreate', async (message) => {
       }
     }
 
-    // 5. Post Embed to Alerts Channel
+    // 5. Post Webhook Embed
     const joinText = gameUrl ? `[👉 **Click Here to Join Server**](${gameUrl})` : '*Link not detected*';
     const activeEmbed = new MessageEmbed()
       .setTitle(`🥚 Rare Spawn: ${eggName} Egg`)
