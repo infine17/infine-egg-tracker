@@ -4,6 +4,9 @@ process.env.FFMPEG_PATH = ffmpeg;
 const { Client, WebhookClient, MessageEmbed, MessageActionRow, MessageButton } = require('discord.js-selfbot-v13');
 const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, entersState, VoiceConnectionStatus } = require('@discordjs/voice');
 const http = require('http');
+const https = require('https');
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
 
 http.createServer((req, res) => {
@@ -56,17 +59,43 @@ const DEFAULT_ICON = 'https://cdn-icons-png.flaticon.com/512/833/833593.png';
 const seenMessages = new Set();
 
 client.on('ready', () => {
-  console.log('Infine v1 Dispatch active as: ' + client.user.tag);
+  console.log(`Infine v1 Voice Dispatch active as: ${client.user.tag}`);
 });
+
+// Download TTS audio to local file on Render disk
+function downloadAudio(url, destPath) {
+  return new Promise((resolve, reject) => {
+    const file = fs.createWriteStream(destPath);
+    https.get(url, (response) => {
+      if (response.statusCode !== 200) {
+        return reject(new Error(`TTS stream failed with HTTP ${response.statusCode}`));
+      }
+      response.pipe(file);
+      file.on('finish', () => file.close(resolve));
+    }).on('error', (err) => {
+      fs.unlink(destPath, () => {});
+      reject(err);
+    });
+  });
+}
 
 // Resilient Voice Announcement Engine
 async function triggerVoiceAlert(eggName, rarityTier, location) {
   if (!VOICE_CHANNEL_ID) return;
 
+  const audioPath = path.join(__dirname, 'alert.mp3');
+  const spokenText = `Attention. ${rarityTier} ${eggName} egg sighted in${location} biome.`;
+  const ttsUrl = `https://api.streamelements.com/kappa/v2/speech?voice=Brian&text=${encodeURIComponent(spokenText)}`;
+
   try {
+    console.log('[VC] Fetching audio file...');
+    await downloadAudio(ttsUrl, audioPath);
+    console.log('[VC] Audio cached locally.');
+
     const vc = await client.channels.fetch(VOICE_CHANNEL_ID);
     if (!vc || !vc.isVoice()) return;
 
+    console.log('[VC] Connecting to voice channel...');
     const connection = joinVoiceChannel({
       channelId: vc.id,
       guildId: vc.guild.id,
@@ -75,37 +104,42 @@ async function triggerVoiceAlert(eggName, rarityTier, location) {
       selfMute: false
     });
 
-    // Hard emergency kill-switch: Leaves within 8 seconds no matter what happens
-    const emergencyTimeout = setTimeout(() => {
-      try { connection.destroy(); } catch (e) {}
-    }, 8000);
+    connection.on('stateChange', (oldState, newState) => {
+      console.log(`[VC State] ${oldState.status} ->${newState.status}`);
+    });
 
-    await entersState(connection, VoiceConnectionStatus.Ready, 5000);
+    // 35-second hard fail-safe to leave VC if anything hangs
+    const emergencyTimeout = setTimeout(() => {
+      console.log('[VC] Safety timeout reached, leaving channel.');
+      try { connection.destroy(); } catch (e) {}
+    }, 35000);
+
+    // Wait up to 20 seconds for Render's cloud connection to finish handshaking
+    await entersState(connection, VoiceConnectionStatus.Ready, 20000);
+    console.log('[VC] Connection established. Playing audio...');
 
     const player = createAudioPlayer();
+    const resource = createAudioResource(audioPath);
+
     connection.subscribe(player);
-
-    const spokenText = `Alert. ${rarityTier} ${eggName} egg in ${location}.`;
-    const ttsUrl = `https://api.streamelements.com/kappa/v2/speech?voice=Brian&text=${encodeURIComponent(spokenText)}`;
-
-    const ttsResource = createAudioResource(ttsUrl);
-    player.play(ttsResource);
+    player.play(resource);
 
     player.on(AudioPlayerStatus.Idle, () => {
+      console.log('[VC] Audio announcement finished.');
       clearTimeout(emergencyTimeout);
       setTimeout(() => {
         try { connection.destroy(); } catch (err) {}
-      }, 800);
+      }, 1000);
     });
 
     player.on('error', (err) => {
-      console.error('Audio engine error:', err.message);
+      console.error('[VC Player Error]:', err.message);
       clearTimeout(emergencyTimeout);
       try { connection.destroy(); } catch (e) {}
     });
 
   } catch (err) {
-    console.error('Voice execution failed:', err.message);
+    console.error('[VC Execution Failed]:', err.message);
   }
 }
 
@@ -204,12 +238,12 @@ client.on('messageCreate', async (message) => {
     // 5. Post Embed to Alerts Channel
     const joinText = gameUrl ? `[👉 **Click Here to Join Server**](${gameUrl})` : '*Link not detected*';
     const activeEmbed = new MessageEmbed()
-      .setTitle('🥚 Rare Spawn: ' + eggName + ' Egg')
+      .setTitle(`🥚 Rare Spawn: ${eggName} Egg`)
       .setColor(embedColor)
       .addFields(
-        { name: '📍 Location', value: '`' + location + '`', inline: true },
-        { name: '💵 Income', value: '`' + income + '`', inline: true },
-        { name: '⚡ Req. Speed', value: '`' + speed + '`', inline: true },
+        { name: '📍 Location', value: `\`${location}\``, inline: true },
+        { name: '💵 Income', value: `\`${income}\``, inline: true },
+        { name: '⚡ Req. Speed', value: `\`${speed}\``, inline: true },
         { name: '⏱️ Spawned', value: spawned, inline: true },
         { name: '🔗 Quick Join', value: joinText, inline: false }
       )
@@ -237,7 +271,7 @@ client.on('messageCreate', async (message) => {
     };
 
     if (mentionRole) {
-      postPayload.content = `${mentionRole} 🚨 **${rarityTier} Egg Spawned: ${eggName}!**`;
+      postPayload.content = `${mentionRole} 🚨 **${rarityTier} Egg Spawned:${eggName}!**`;
     }
 
     const sentMessage = await webhook.send(postPayload);
@@ -252,11 +286,11 @@ client.on('messageCreate', async (message) => {
       setTimeout(async () => {
         try {
           const expiredEmbed = new MessageEmbed()
-            .setTitle('💀 DESPAWNED: ' + eggName + ' Egg')
+            .setTitle(`💀 DESPAWNED: ${eggName} Egg`)
             .setColor('#4F545C')
             .setDescription('*The 5-minute nest cycle has concluded. This egg is no longer in the biome.*')
             .addFields(
-              { name: '📍 Location', value: '`' + location + '`', inline: true },
+              { name: '📍 Location', value: `\`${location}\``, inline: true },
               { name: '⏳ Status', value: '`CYCLE ENDED`', inline: true }
             )
             .setThumbnail(selectedImage)
