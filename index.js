@@ -1,4 +1,3 @@
-// 1. Force Discord Voice to use the bundled ffmpeg binary on Render
 const ffmpeg = require('ffmpeg-static');
 process.env.FFMPEG_PATH = ffmpeg;
 
@@ -17,9 +16,6 @@ const webhook = new WebhookClient({ url: process.env.WEBHOOK_URL });
 
 const SOURCE_CHANNEL_ID = process.env.SOURCE_CHANNEL_ID;
 const VOICE_CHANNEL_ID = process.env.VOICE_CHANNEL_ID;
-
-// Short tactical beep chime (1 second)
-const RADAR_CHIME_URL = 'https://www.soundjay.com/buttons/sounds/beep-01a.mp3';
 const GITHUB_BASE = 'https://raw.githubusercontent.com/infine17/infine-egg-tracker/main/';
 
 const PET_IMAGES = {
@@ -60,10 +56,10 @@ const DEFAULT_ICON = 'https://cdn-icons-png.flaticon.com/512/833/833593.png';
 const seenMessages = new Set();
 
 client.on('ready', () => {
-  console.log('Infine v1 Voice Dispatch active as: ' + client.user.tag);
+  console.log('Infine v1 Dispatch active as: ' + client.user.tag);
 });
 
-// Robust Voice Routine: Chime -> Spoken Announcement -> Disconnect
+// Resilient Voice Announcement Engine
 async function triggerVoiceAlert(eggName, rarityTier, location) {
   if (!VOICE_CHANNEL_ID) return;
 
@@ -71,7 +67,6 @@ async function triggerVoiceAlert(eggName, rarityTier, location) {
     const vc = await client.channels.fetch(VOICE_CHANNEL_ID);
     if (!vc || !vc.isVoice()) return;
 
-    // Join without deafen or mute icons
     const connection = joinVoiceChannel({
       channelId: vc.id,
       guildId: vc.guild.id,
@@ -80,41 +75,37 @@ async function triggerVoiceAlert(eggName, rarityTier, location) {
       selfMute: false
     });
 
+    // Hard emergency kill-switch: Leaves within 8 seconds no matter what happens
+    const emergencyTimeout = setTimeout(() => {
+      try { connection.destroy(); } catch (e) {}
+    }, 8000);
+
     await entersState(connection, VoiceConnectionStatus.Ready, 5000);
 
     const player = createAudioPlayer();
     connection.subscribe(player);
 
-    // StreamElements TTS does not block cloud hosting IPs
-    const spokenText = `Attention. ${rarityTier} ${eggName} egg sighted in ${location} biome.`;
+    const spokenText = `Alert. ${rarityTier} ${eggName} egg in ${location}.`;
     const ttsUrl = `https://api.streamelements.com/kappa/v2/speech?voice=Brian&text=${encodeURIComponent(spokenText)}`;
 
-    // Play quick chime first
-    const chimeResource = createAudioResource(RADAR_CHIME_URL);
-    player.play(chimeResource);
-
-    let ttsPlayed = false;
+    const ttsResource = createAudioResource(ttsUrl);
+    player.play(ttsResource);
 
     player.on(AudioPlayerStatus.Idle, () => {
-      if (!ttsPlayed) {
-        ttsPlayed = true;
-        // Instantiate speech stream only when the chime finishes
-        const ttsResource = createAudioResource(ttsUrl);
-        player.play(ttsResource);
-      } else {
-        setTimeout(() => {
-          try { connection.destroy(); } catch (err) {}
-        }, 1000);
-      }
+      clearTimeout(emergencyTimeout);
+      setTimeout(() => {
+        try { connection.destroy(); } catch (err) {}
+      }, 800);
     });
 
     player.on('error', (err) => {
-      console.error('Audio playback error:', err.message);
+      console.error('Audio engine error:', err.message);
+      clearTimeout(emergencyTimeout);
       try { connection.destroy(); } catch (e) {}
     });
 
   } catch (err) {
-    console.error('VC Connection failed:', err.message);
+    console.error('Voice execution failed:', err.message);
   }
 }
 
@@ -158,7 +149,7 @@ client.on('messageCreate', async (message) => {
       if (match) gameUrl = match[0];
     }
 
-    // 2. Parse Stats
+    // 2. Parse Spawn Details
     let cleanText = rawText.replace(/<a?:[a-zA-Z0-9_]+:[0-9]+>/g, '').replace(/\*\*/g, '').replace(/__/g, '');
     const eggMatch = cleanText.match(/(?:^|\n|[^\w])Egg:\s*([^\n\r]+)/i);
     const locMatch = cleanText.match(/Location:\s*([^\n\r]+)/i);
@@ -172,7 +163,7 @@ client.on('messageCreate', async (message) => {
     const income = moneyMatch ? moneyMatch[1].split(/recommended|speed/i)[0].trim() : 'N/A';
     const speed = speedMatch ? speedMatch[1].trim() : 'N/A';
 
-    // 3. Rarity & Roles
+    // 3. Rarity Tiers & Roles
     let embedColor = '#FFFFFF';
     let rarityTier = 'Unknown';
     const titleLower = (original.title || '').toLowerCase();
@@ -200,7 +191,7 @@ client.on('messageCreate', async (message) => {
       mentionRole = `<@&${process.env.PING_ROLE_ID}>`;
     }
 
-    // 4. Match Pet Image
+    // 4. Asset Matcher
     const lookupKey = eggName.toLowerCase().replace(/[^a-z0-9]/g, '');
     let selectedImage = DEFAULT_ICON;
     for (const [key, filename] of Object.entries(PET_IMAGES)) {
@@ -210,7 +201,7 @@ client.on('messageCreate', async (message) => {
       }
     }
 
-    // 5. Post Embed to Text Channel
+    // 5. Post Embed to Alerts Channel
     const joinText = gameUrl ? `[👉 **Click Here to Join Server**](${gameUrl})` : '*Link not detected*';
     const activeEmbed = new MessageEmbed()
       .setTitle('🥚 Rare Spawn: ' + eggName + ' Egg')
@@ -251,7 +242,7 @@ client.on('messageCreate', async (message) => {
 
     const sentMessage = await webhook.send(postPayload);
 
-    // 6. Fire Voice Dispatch
+    // 6. Voice Announcement
     if (['Divine', 'Eternal', 'Secret'].includes(rarityTier)) {
       triggerVoiceAlert(eggName, rarityTier, location);
     }
