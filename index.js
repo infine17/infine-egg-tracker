@@ -2,7 +2,7 @@ const { Client, WebhookClient, MessageEmbed, MessageActionRow, MessageButton } =
 const http = require('http');
 require('dotenv').config();
 
-// Keep-alive HTTP server for Render
+// Keep-alive HTTP server for hosting health checks
 http.createServer((req, res) => {
   res.writeHead(200);
   res.end('Infine v1 Multi-Tracker Active');
@@ -10,7 +10,7 @@ http.createServer((req, res) => {
 
 const client = new Client({ checkUpdate: false });
 
-// Webhooks
+// Webhook Clients
 const eggWebhook = new WebhookClient({ url: process.env.WEBHOOK_URL });
 const eventWebhook = process.env.EVENT_WEBHOOK_URL ? new WebhookClient({ url: process.env.EVENT_WEBHOOK_URL }) : null;
 
@@ -58,15 +58,14 @@ const DEFAULT_ICON = 'https://cdn-icons-png.flaticon.com/512/833/833593.png';
 const seenMessages = new Set();
 
 client.on('ready', () => {
-  console.log(`Infine v1 Multi-Tracker active as: ${client.user.tag}`);
+  console.log(`Infine v1 Dispatch active as: ${client.user.tag}`);
 });
 
 client.on('messageCreate', async (message) => {
-  // Ignore messages outside designated source channels
   if (message.channelId !== SOURCE_CHANNEL_ID && message.channelId !== EVENT_SOURCE_CHANNEL_ID) return;
   if (!message.embeds || message.embeds.length === 0) return;
 
-  // Prevent duplicate execution
+  // Deduplicate alerts
   if (seenMessages.has(message.id)) return;
   seenMessages.add(message.id);
   if (seenMessages.size > 150) {
@@ -78,7 +77,7 @@ client.on('messageCreate', async (message) => {
     const original = message.embeds[0];
 
     // ==========================================
-    // PIPELINE 1: RIFT & EXPERIMENT EVENTS
+    // PIPELINE 1: EXPERIMENT & RIFT NOTIFICATIONS
     // ==========================================
     if (message.channelId === EVENT_SOURCE_CHANNEL_ID) {
       if (!eventWebhook) return;
@@ -88,7 +87,7 @@ client.on('messageCreate', async (message) => {
         rawText += '\n' + original.fields.map(f => f.name + ': ' + f.value).join('\n');
       }
 
-      // Extract Join URL
+      // 1. Extract Roblox Game Link
       let gameUrl = null;
       if (message.components && message.components.length > 0) {
         for (const row of message.components) {
@@ -107,37 +106,60 @@ client.on('messageCreate', async (message) => {
       }
 
       const isExperiment = (original.title || '').toLowerCase().includes('experiment') || rawText.toLowerCase().includes('experiment');
-      const embedColor = isExperiment ? 0x00FF88 : 0x9B59B6; // Toxic green for Experiment, Purple for Rift
+      const embedColor = isExperiment ? 0x00FF88 : 0xA855F7;
 
-      // Strip original footer branding from description if repeated
-      let cleanDesc = (original.description || '')
-        .replace(/SenZ V2[^\n\r]+/gi, '')
-        .trim();
+      // Clean raw text
+      let cleanText = rawText.replace(/<a?:[a-zA-Z0-9_]+:[0-9]+>/g, '').replace(/\*\*/g, '').replace(/__/g, '');
 
+      // Parse Experiment & Timer data
+      const expMatch = cleanText.match(/([A-Za-z0-9\.\s]+?)\s+Experiment\s+has\s+appeared/i);
+      const experimentName = expMatch ? expMatch[1].trim() : 'Dr. Scramble';
+
+      const timerMatch = cleanText.match(/(?:Next\s+experiment\s+in|Next\s+Change):\s*([^\n\r]+)/i);
+      const nextTimer = timerMatch ? timerMatch[1].trim() : 'Active Now';
+
+      const joinText = gameUrl ? `[👉 **Click Here to Join Server**](${gameUrl})` : '*Link not detected*';
+
+      // 2. Build Upgraded Embed UI
       const eventEmbed = new MessageEmbed()
-        .setTitle(original.title || (isExperiment ? '⚠️ A Forbidden Experiment Has Appeared!' : '🌀 Rift Event Update'))
+        .setTitle(isExperiment ? `🧪 A Forbidden Experiment Has Appeared!` : `🌀 Rift Dimension Shift`)
         .setColor(embedColor)
-        .setDescription(cleanDesc)
-        .setFooter({ text: 'Infine v1 • Steal An Egg Event Tracker' })
+        .setFooter({ text: 'Infine v1 • Steal An Egg Event Dispatch' })
         .setTimestamp();
 
-      if (original.thumbnail) eventEmbed.setThumbnail(original.thumbnail.url);
-      if (original.image) eventEmbed.setImage(original.image.url);
-
-      if (original.fields && original.fields.length > 0) {
-        eventEmbed.addFields(original.fields.map(f => ({
-          name: f.name,
-          value: f.value,
-          inline: f.inline ?? false
-        })));
+      // Maintain the exact original asset from the source
+      if (original.thumbnail && original.thumbnail.url) {
+        eventEmbed.setThumbnail(original.thumbnail.url);
+      } else if (original.image && original.image.url) {
+        eventEmbed.setThumbnail(original.image.url);
       }
 
+      if (isExperiment) {
+        eventEmbed.addFields(
+          { name: '🧪 Experiment', value: `\`${experimentName}\``, inline: true },
+          { name: '⚡ Status', value: '`🟢 ACTIVE NOW`', inline: true },
+          { name: '⏳ Next Experiment', value: `\`${nextTimer}\``, inline: true },
+          { name: '🔗 Quick Join', value: joinText, inline: false }
+        );
+      } else {
+        const petsMatch = cleanText.match(/Possible\s+Pets:?([\s\S]*?)(?:Join\s+Game|$)/i);
+        const petsText = petsMatch ? petsMatch[1].trim() : 'Check in-game dimension portal';
+
+        eventEmbed.addFields(
+          { name: '⏳ Next Change', value: `\`${nextTimer}\``, inline: true },
+          { name: '⚡ Dimension', value: '`🟣 STABLE`', inline: true },
+          { name: '📦 Possible Drops', value: `\`\`\`yaml\n${petsText.substring(0, 450)}\n\`\`\``, inline: false },
+          { name: '🔗 Quick Join', value: joinText, inline: false }
+        );
+      }
+
+      // 3. Attach Direct Interactive Teleport Button
       const components = [];
       if (gameUrl) {
         components.push(
           new MessageActionRow().addComponents(
             new MessageButton()
-              .setLabel('Join Roblox Game')
+              .setLabel(isExperiment ? '🧪 Teleport to Experiment' : '🌀 Teleport to Rift')
               .setStyle('LINK')
               .setURL(gameUrl)
           )
@@ -152,7 +174,7 @@ client.on('messageCreate', async (message) => {
       };
 
       if (process.env.EVENT_ROLE_ID) {
-        postPayload.content = `<@&${process.env.EVENT_ROLE_ID}> 🚨 **${isExperiment ? 'A Forbidden Experiment Has Spawned!' : 'Rift Event Update!'}**`;
+        postPayload.content = `<@&${process.env.EVENT_ROLE_ID}> 🚨 **${isExperiment ? `Forbidden Experiment Detected: ${experimentName}!` : 'Rift Event Shift!'}**`;
       }
 
       await eventWebhook.send(postPayload);
@@ -203,7 +225,7 @@ client.on('messageCreate', async (message) => {
       const income = moneyMatch ? moneyMatch[1].split(/recommended|speed/i)[0].trim() : 'N/A';
       const speed = speedMatch ? speedMatch[1].trim() : 'N/A';
 
-      // Rarity Tiers
+      // Rarity Determinations
       let embedColor = '#FFFFFF';
       let rarityTier = 'Unknown';
       const titleLower = (original.title || '').toLowerCase();
@@ -231,7 +253,7 @@ client.on('messageCreate', async (message) => {
         mentionRole = `<@&${process.env.PING_ROLE_ID}>`;
       }
 
-      // Match Local Asset Image
+      // Match Local Custom Asset
       const lookupKey = eggName.toLowerCase().replace(/[^a-z0-9]/g, '');
       let selectedImage = DEFAULT_ICON;
       for (const [key, filename] of Object.entries(PET_IMAGES)) {
