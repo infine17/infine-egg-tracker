@@ -1,24 +1,17 @@
-const ffmpeg = require('ffmpeg-static');
-process.env.FFMPEG_PATH = ffmpeg;
-
 const { Client, WebhookClient, MessageEmbed, MessageActionRow, MessageButton } = require('discord.js-selfbot-v13');
-const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, entersState, VoiceConnectionStatus } = require('@discordjs/voice');
 const http = require('http');
-const https = require('https');
-const fs = require('fs');
-const path = require('path');
 require('dotenv').config();
 
+// Keep-alive HTTP server for Render web service
 http.createServer((req, res) => {
   res.writeHead(200);
-  res.end('Infine v1 Voice Dispatch Active');
+  res.end('Infine v1 Tracker Active');
 }).listen(process.env.PORT || 8000);
 
 const client = new Client({ checkUpdate: false });
 const webhook = new WebhookClient({ url: process.env.WEBHOOK_URL });
 
 const SOURCE_CHANNEL_ID = process.env.SOURCE_CHANNEL_ID;
-const VOICE_CHANNEL_ID = process.env.VOICE_CHANNEL_ID;
 const GITHUB_BASE = 'https://raw.githubusercontent.com/infine17/infine-egg-tracker/main/';
 
 const PET_IMAGES = {
@@ -59,110 +52,14 @@ const DEFAULT_ICON = 'https://cdn-icons-png.flaticon.com/512/833/833593.png';
 const seenMessages = new Set();
 
 client.on('ready', () => {
-  console.log(`Infine v1 Voice Dispatch active as: ${client.user.tag}`);
+  console.log(`Infine v1 Dispatch active as: ${client.user.tag}`);
 });
-
-// Download TTS audio to Render disk with browser headers & redirect support
-function downloadAudio(targetUrl, destPath) {
-  return new Promise((resolve, reject) => {
-    const fetchStream = (urlStr) => {
-      const parsed = new URL(urlStr);
-      const req = https.get({
-        hostname: parsed.hostname,
-        path: parsed.pathname + parsed.search,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Referer': 'https://translate.google.com/'
-        }
-      }, (res) => {
-        // Follow Google 301/302 redirects automatically
-        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          return fetchStream(res.headers.location);
-        }
-        if (res.statusCode !== 200) {
-          return reject(new Error(`TTS stream failed with HTTP ${res.statusCode}`));
-        }
-        const file = fs.createWriteStream(destPath);
-        res.pipe(file);
-        file.on('finish', () => file.close(resolve));
-      });
-
-      req.on('error', (err) => {
-        fs.unlink(destPath, () => {});
-        reject(err);
-      });
-    };
-
-    fetchStream(targetUrl);
-  });
-}
-
-// Resilient Voice Announcement Engine
-async function triggerVoiceAlert(eggName, rarityTier, location) {
-  if (!VOICE_CHANNEL_ID) return;
-
-  const audioPath = path.join(__dirname, 'alert.mp3');
-  const spokenText = `Alert. ${rarityTier} ${eggName} egg in${location}.`;
-  const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en&q=${encodeURIComponent(spokenText)}`;
-
-  try {
-    console.log('[VC] Fetching speech audio...');
-    await downloadAudio(ttsUrl, audioPath);
-    console.log('[VC] Speech audio cached.');
-
-    const vc = await client.channels.fetch(VOICE_CHANNEL_ID);
-    if (!vc || !vc.isVoice()) return;
-
-    console.log('[VC] Connecting to voice channel...');
-    const connection = joinVoiceChannel({
-      channelId: vc.id,
-      guildId: vc.guild.id,
-      adapterCreator: vc.guild.voiceAdapterCreator,
-      selfDeaf: false,
-      selfMute: false
-    });
-
-    connection.on('stateChange', (oldState, newState) => {
-      console.log(`[VC State] ${oldState.status} ->${newState.status}`);
-    });
-
-    const emergencyTimeout = setTimeout(() => {
-      console.log('[VC] Timeout reached, disconnecting.');
-      try { connection.destroy(); } catch (e) {}
-    }, 25000);
-
-    await entersState(connection, VoiceConnectionStatus.Ready, 20000);
-    console.log('[VC] Connected. Broadcasting audio...');
-
-    const player = createAudioPlayer();
-    const resource = createAudioResource(audioPath);
-
-    connection.subscribe(player);
-    player.play(resource);
-
-    player.on(AudioPlayerStatus.Idle, () => {
-      console.log('[VC] Announcement complete. Leaving channel.');
-      clearTimeout(emergencyTimeout);
-      setTimeout(() => {
-        try { connection.destroy(); } catch (err) {}
-      }, 1000);
-    });
-
-    player.on('error', (err) => {
-      console.error('[VC Player Error]:', err.message);
-      clearTimeout(emergencyTimeout);
-      try { connection.destroy(); } catch (e) {}
-    });
-
-  } catch (err) {
-    console.error('[VC Execution Failed]:', err.message);
-  }
-}
 
 client.on('messageCreate', async (message) => {
   if (message.channelId !== SOURCE_CHANNEL_ID) return;
   if (!message.embeds || message.embeds.length === 0) return;
 
+  // Deduplicate incoming alerts
   if (seenMessages.has(message.id)) return;
   seenMessages.add(message.id);
   if (seenMessages.size > 100) {
@@ -181,7 +78,7 @@ client.on('messageCreate', async (message) => {
       rawText += '\n' + original.fields.map(f => f.name + ': ' + f.value).join('\n');
     }
 
-    // 1. Extract Roblox Link
+    // 1. Extract Roblox Game Link
     let gameUrl = null;
     if (message.components && message.components.length > 0) {
       for (const row of message.components) {
@@ -199,7 +96,7 @@ client.on('messageCreate', async (message) => {
       if (match) gameUrl = match[0];
     }
 
-    // 2. Parse Spawn Details
+    // 2. Parse Spawn Details cleanly
     let cleanText = rawText.replace(/<a?:[a-zA-Z0-9_]+:[0-9]+>/g, '').replace(/\*\*/g, '').replace(/__/g, '');
     const eggMatch = cleanText.match(/(?:^|\n|[^\w])Egg:\s*([^\n\r]+)/i);
     const locMatch = cleanText.match(/Location:\s*([^\n\r]+)/i);
@@ -213,7 +110,7 @@ client.on('messageCreate', async (message) => {
     const income = moneyMatch ? moneyMatch[1].split(/recommended|speed/i)[0].trim() : 'N/A';
     const speed = speedMatch ? speedMatch[1].trim() : 'N/A';
 
-    // 3. Rarity Tiers & Roles
+    // 3. Determine Rarity & Colors
     let embedColor = '#FFFFFF';
     let rarityTier = 'Unknown';
     const titleLower = (original.title || '').toLowerCase();
@@ -241,7 +138,7 @@ client.on('messageCreate', async (message) => {
       mentionRole = `<@&${process.env.PING_ROLE_ID}>`;
     }
 
-    // 4. Match Pet Image
+    // 4. Asset Matcher
     const lookupKey = eggName.toLowerCase().replace(/[^a-z0-9]/g, '');
     let selectedImage = DEFAULT_ICON;
     for (const [key, filename] of Object.entries(PET_IMAGES)) {
@@ -251,7 +148,7 @@ client.on('messageCreate', async (message) => {
       }
     }
 
-    // 5. Post Webhook Embed
+    // 5. Build Alert Embed
     const joinText = gameUrl ? `[👉 **Click Here to Join Server**](${gameUrl})` : '*Link not detected*';
     const activeEmbed = new MessageEmbed()
       .setTitle(`🥚 Rare Spawn: ${eggName} Egg`)
@@ -287,42 +184,11 @@ client.on('messageCreate', async (message) => {
     };
 
     if (mentionRole) {
-      postPayload.content = `${mentionRole} 🚨 **${rarityTier} Egg Spawned:${eggName}!**`;
+      postPayload.content = `${mentionRole} 🚨 **${rarityTier} Egg Spawned: ${eggName}!**`;
     }
 
-    const sentMessage = await webhook.send(postPayload);
-
-    // 6. Voice Announcement
-    if (['Divine', 'Eternal', 'Secret'].includes(rarityTier)) {
-      triggerVoiceAlert(eggName, rarityTier, location);
-    }
-
-    // 7. Auto-Expire Message After 4m 30s
-    if (sentMessage && sentMessage.id) {
-      setTimeout(async () => {
-        try {
-          const expiredEmbed = new MessageEmbed()
-            .setTitle(`💀 DESPAWNED: ${eggName} Egg`)
-            .setColor('#4F545C')
-            .setDescription('*The 5-minute nest cycle has concluded. This egg is no longer in the biome.*')
-            .addFields(
-              { name: '📍 Location', value: `\`${location}\``, inline: true },
-              { name: '⏳ Status', value: '`CYCLE ENDED`', inline: true }
-            )
-            .setThumbnail(selectedImage)
-            .setFooter({ text: 'Infine v1 • Spawn Expired' })
-            .setTimestamp();
-
-          await webhook.editMessage(sentMessage.id, {
-            content: mentionRole ? `~~${mentionRole} 🚨 ${rarityTier} Egg Spawned: ${eggName}!~~ *(Despawned)*` : '~~Spawn Alert~~ *(Despawned)*',
-            embeds: [expiredEmbed],
-            components: []
-          });
-        } catch (editErr) {
-          console.error('Failed to auto-expire embed:', editErr);
-        }
-      }, 270 * 1000);
-    }
+    // Send and leave permanent
+    await webhook.send(postPayload);
 
   } catch (err) {
     console.error('Tracker error:', err);
