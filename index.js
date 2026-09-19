@@ -2,16 +2,22 @@ const { Client, WebhookClient, MessageEmbed, MessageActionRow, MessageButton } =
 const http = require('http');
 require('dotenv').config();
 
-// Keep-alive HTTP server for Render web service
+// Keep-alive HTTP server for Render
 http.createServer((req, res) => {
   res.writeHead(200);
-  res.end('Infine v1 Tracker Active');
+  res.end('Infine v1 Multi-Tracker Active');
 }).listen(process.env.PORT || 8000);
 
 const client = new Client({ checkUpdate: false });
-const webhook = new WebhookClient({ url: process.env.WEBHOOK_URL });
 
+// Webhooks
+const eggWebhook = new WebhookClient({ url: process.env.WEBHOOK_URL });
+const eventWebhook = process.env.EVENT_WEBHOOK_URL ? new WebhookClient({ url: process.env.EVENT_WEBHOOK_URL }) : null;
+
+// Source Channel IDs
 const SOURCE_CHANNEL_ID = process.env.SOURCE_CHANNEL_ID;
+const EVENT_SOURCE_CHANNEL_ID = process.env.EVENT_SOURCE_CHANNEL_ID;
+
 const GITHUB_BASE = 'https://raw.githubusercontent.com/infine17/infine-egg-tracker/main/';
 
 const PET_IMAGES = {
@@ -52,17 +58,18 @@ const DEFAULT_ICON = 'https://cdn-icons-png.flaticon.com/512/833/833593.png';
 const seenMessages = new Set();
 
 client.on('ready', () => {
-  console.log(`Infine v1 Dispatch active as: ${client.user.tag}`);
+  console.log(`Infine v1 Multi-Tracker active as: ${client.user.tag}`);
 });
 
 client.on('messageCreate', async (message) => {
-  if (message.channelId !== SOURCE_CHANNEL_ID) return;
+  // Ignore messages outside designated source channels
+  if (message.channelId !== SOURCE_CHANNEL_ID && message.channelId !== EVENT_SOURCE_CHANNEL_ID) return;
   if (!message.embeds || message.embeds.length === 0) return;
 
-  // Deduplicate incoming alerts
+  // Prevent duplicate execution
   if (seenMessages.has(message.id)) return;
   seenMessages.add(message.id);
-  if (seenMessages.size > 100) {
+  if (seenMessages.size > 150) {
     const firstItem = seenMessages.values().next().value;
     seenMessages.delete(firstItem);
   }
@@ -70,125 +77,210 @@ client.on('messageCreate', async (message) => {
   try {
     const original = message.embeds[0];
 
-    let descText = original.description || '';
-    let contentText = message.content || '';
-    let rawText = descText + '\n' + contentText;
+    // ==========================================
+    // PIPELINE 1: RIFT & EXPERIMENT EVENTS
+    // ==========================================
+    if (message.channelId === EVENT_SOURCE_CHANNEL_ID) {
+      if (!eventWebhook) return;
 
-    if (original.fields && original.fields.length > 0) {
-      rawText += '\n' + original.fields.map(f => f.name + ': ' + f.value).join('\n');
-    }
+      let rawText = (original.description || '') + '\n' + (message.content || '');
+      if (original.fields && original.fields.length > 0) {
+        rawText += '\n' + original.fields.map(f => f.name + ': ' + f.value).join('\n');
+      }
 
-    // 1. Extract Roblox Game Link
-    let gameUrl = null;
-    if (message.components && message.components.length > 0) {
-      for (const row of message.components) {
-        for (const comp of row.components) {
-          if (comp.url && (comp.url.includes('roblox.com') || comp.url.includes('share'))) {
-            gameUrl = comp.url;
-            break;
+      // Extract Join URL
+      let gameUrl = null;
+      if (message.components && message.components.length > 0) {
+        for (const row of message.components) {
+          for (const comp of row.components) {
+            if (comp.url && (comp.url.includes('roblox.com') || comp.url.includes('share'))) {
+              gameUrl = comp.url;
+              break;
+            }
           }
         }
       }
-    }
-    if (!gameUrl && original.url) gameUrl = original.url;
-    if (!gameUrl) {
-      const match = rawText.match(/https?:\/\/[^\s\)\>]+/);
-      if (match) gameUrl = match[0];
-    }
-
-    // 2. Parse Spawn Details cleanly
-    let cleanText = rawText.replace(/<a?:[a-zA-Z0-9_]+:[0-9]+>/g, '').replace(/\*\*/g, '').replace(/__/g, '');
-    const eggMatch = cleanText.match(/(?:^|\n|[^\w])Egg:\s*([^\n\r]+)/i);
-    const locMatch = cleanText.match(/Location:\s*([^\n\r]+)/i);
-    const spawnMatch = cleanText.match(/Spawned:\s*([^\n\r]+)/i);
-    const moneyMatch = cleanText.match(/Money:\s*([^\n\r]+)/i);
-    const speedMatch = cleanText.match(/(?:Recommended\s+)?Speed:\s*([^\n\r]+)/i);
-
-    const eggName = eggMatch ? eggMatch[1].replace(/egg/gi, '').trim() : 'Rare';
-    const location = locMatch ? locMatch[1].trim() : 'Unknown';
-    const spawned = spawnMatch ? spawnMatch[1].trim() : 'Just now';
-    const income = moneyMatch ? moneyMatch[1].split(/recommended|speed/i)[0].trim() : 'N/A';
-    const speed = speedMatch ? speedMatch[1].trim() : 'N/A';
-
-    // 3. Determine Rarity & Colors
-    let embedColor = '#FFFFFF';
-    let rarityTier = 'Unknown';
-    const titleLower = (original.title || '').toLowerCase();
-    const fullLower = cleanText.toLowerCase();
-
-    if (titleLower.includes('divine') || fullLower.includes('divine')) {
-      rarityTier = 'Divine';
-      embedColor = '#FFD700';
-    } else if (titleLower.includes('eternal') || fullLower.includes('eternal')) {
-      rarityTier = 'Eternal';
-      embedColor = '#00F0FF';
-    } else if (titleLower.includes('secret') || fullLower.includes('secret')) {
-      rarityTier = 'Secret';
-      embedColor = '#A855F7';
-    }
-
-    let mentionRole = '';
-    if (rarityTier === 'Divine' && process.env.DIVINE_ROLE_ID) {
-      mentionRole = `<@&${process.env.DIVINE_ROLE_ID}>`;
-    } else if (rarityTier === 'Eternal' && process.env.ETERNAL_ROLE_ID) {
-      mentionRole = `<@&${process.env.ETERNAL_ROLE_ID}>`;
-    } else if (rarityTier === 'Secret' && process.env.SECRET_ROLE_ID) {
-      mentionRole = `<@&${process.env.SECRET_ROLE_ID}>`;
-    } else if (process.env.PING_ROLE_ID) {
-      mentionRole = `<@&${process.env.PING_ROLE_ID}>`;
-    }
-
-    // 4. Asset Matcher
-    const lookupKey = eggName.toLowerCase().replace(/[^a-z0-9]/g, '');
-    let selectedImage = DEFAULT_ICON;
-    for (const [key, filename] of Object.entries(PET_IMAGES)) {
-      if (lookupKey.includes(key) || key.includes(lookupKey)) {
-        selectedImage = GITHUB_BASE + filename;
-        break;
+      if (!gameUrl && original.url) gameUrl = original.url;
+      if (!gameUrl) {
+        const match = rawText.match(/https?:\/\/[^\s\)\>]+/);
+        if (match) gameUrl = match[0];
       }
+
+      const isExperiment = (original.title || '').toLowerCase().includes('experiment') || rawText.toLowerCase().includes('experiment');
+      const embedColor = isExperiment ? 0x00FF88 : 0x9B59B6; // Toxic green for Experiment, Purple for Rift
+
+      // Strip original footer branding from description if repeated
+      let cleanDesc = (original.description || '')
+        .replace(/SenZ V2[^\n\r]+/gi, '')
+        .trim();
+
+      const eventEmbed = new MessageEmbed()
+        .setTitle(original.title || (isExperiment ? '⚠️ A Forbidden Experiment Has Appeared!' : '🌀 Rift Event Update'))
+        .setColor(embedColor)
+        .setDescription(cleanDesc)
+        .setFooter({ text: 'Infine v1 • Steal An Egg Event Tracker' })
+        .setTimestamp();
+
+      if (original.thumbnail) eventEmbed.setThumbnail(original.thumbnail.url);
+      if (original.image) eventEmbed.setImage(original.image.url);
+
+      if (original.fields && original.fields.length > 0) {
+        eventEmbed.addFields(original.fields.map(f => ({
+          name: f.name,
+          value: f.value,
+          inline: f.inline ?? false
+        })));
+      }
+
+      const components = [];
+      if (gameUrl) {
+        components.push(
+          new MessageActionRow().addComponents(
+            new MessageButton()
+              .setLabel('Join Roblox Game')
+              .setStyle('LINK')
+              .setURL(gameUrl)
+          )
+        );
+      }
+
+      const postPayload = {
+        username: 'Infine v1',
+        embeds: [eventEmbed],
+        components: components.length > 0 ? components : [],
+        allowedMentions: { parse: ['roles', 'users'] }
+      };
+
+      if (process.env.EVENT_ROLE_ID) {
+        postPayload.content = `<@&${process.env.EVENT_ROLE_ID}> 🚨 **${isExperiment ? 'A Forbidden Experiment Has Spawned!' : 'Rift Event Update!'}**`;
+      }
+
+      await eventWebhook.send(postPayload);
+      return;
     }
 
-    // 5. Build Alert Embed
-    const joinText = gameUrl ? `[👉 **Click Here to Join Server**](${gameUrl})` : '*Link not detected*';
-    const activeEmbed = new MessageEmbed()
-      .setTitle(`🥚 Rare Spawn: ${eggName} Egg`)
-      .setColor(embedColor)
-      .addFields(
-        { name: '📍 Location', value: `\`${location}\``, inline: true },
-        { name: '💵 Income', value: `\`${income}\``, inline: true },
-        { name: '⚡ Req. Speed', value: `\`${speed}\``, inline: true },
-        { name: '⏱️ Spawned', value: spawned, inline: true },
-        { name: '🔗 Quick Join', value: joinText, inline: false }
-      )
-      .setThumbnail(selectedImage)
-      .setFooter({ text: 'Infine v1 • Steal An Egg Tracker' })
-      .setTimestamp();
+    // ==========================================
+    // PIPELINE 2: STANDARD EGG SPAWN TRACKER
+    // ==========================================
+    if (message.channelId === SOURCE_CHANNEL_ID) {
+      let descText = original.description || '';
+      let contentText = message.content || '';
+      let rawText = descText + '\n' + contentText;
 
-    const components = [];
-    if (gameUrl) {
-      components.push(
-        new MessageActionRow().addComponents(
-          new MessageButton()
-            .setLabel('Join Roblox Game')
-            .setStyle('LINK')
-            .setURL(gameUrl)
+      if (original.fields && original.fields.length > 0) {
+        rawText += '\n' + original.fields.map(f => f.name + ': ' + f.value).join('\n');
+      }
+
+      // Extract Join URL
+      let gameUrl = null;
+      if (message.components && message.components.length > 0) {
+        for (const row of message.components) {
+          for (const comp of row.components) {
+            if (comp.url && (comp.url.includes('roblox.com') || comp.url.includes('share'))) {
+              gameUrl = comp.url;
+              break;
+            }
+          }
+        }
+      }
+      if (!gameUrl && original.url) gameUrl = original.url;
+      if (!gameUrl) {
+        const match = rawText.match(/https?:\/\/[^\s\)\>]+/);
+        if (match) gameUrl = match[0];
+      }
+
+      // Parse Egg Details
+      let cleanText = rawText.replace(/<a?:[a-zA-Z0-9_]+:[0-9]+>/g, '').replace(/\*\*/g, '').replace(/__/g, '');
+      const eggMatch = cleanText.match(/(?:^|\n|[^\w])Egg:\s*([^\n\r]+)/i);
+      const locMatch = cleanText.match(/Location:\s*([^\n\r]+)/i);
+      const spawnMatch = cleanText.match(/Spawned:\s*([^\n\r]+)/i);
+      const moneyMatch = cleanText.match(/Money:\s*([^\n\r]+)/i);
+      const speedMatch = cleanText.match(/(?:Recommended\s+)?Speed:\s*([^\n\r]+)/i);
+
+      const eggName = eggMatch ? eggMatch[1].replace(/egg/gi, '').trim() : 'Rare';
+      const location = locMatch ? locMatch[1].trim() : 'Unknown';
+      const spawned = spawnMatch ? spawnMatch[1].trim() : 'Just now';
+      const income = moneyMatch ? moneyMatch[1].split(/recommended|speed/i)[0].trim() : 'N/A';
+      const speed = speedMatch ? speedMatch[1].trim() : 'N/A';
+
+      // Rarity Tiers
+      let embedColor = '#FFFFFF';
+      let rarityTier = 'Unknown';
+      const titleLower = (original.title || '').toLowerCase();
+      const fullLower = cleanText.toLowerCase();
+
+      if (titleLower.includes('divine') || fullLower.includes('divine')) {
+        rarityTier = 'Divine';
+        embedColor = '#FFD700';
+      } else if (titleLower.includes('eternal') || fullLower.includes('eternal')) {
+        rarityTier = 'Eternal';
+        embedColor = '#00F0FF';
+      } else if (titleLower.includes('secret') || fullLower.includes('secret')) {
+        rarityTier = 'Secret';
+        embedColor = '#A855F7';
+      }
+
+      let mentionRole = '';
+      if (rarityTier === 'Divine' && process.env.DIVINE_ROLE_ID) {
+        mentionRole = `<@&${process.env.DIVINE_ROLE_ID}>`;
+      } else if (rarityTier === 'Eternal' && process.env.ETERNAL_ROLE_ID) {
+        mentionRole = `<@&${process.env.ETERNAL_ROLE_ID}>`;
+      } else if (rarityTier === 'Secret' && process.env.SECRET_ROLE_ID) {
+        mentionRole = `<@&${process.env.SECRET_ROLE_ID}>`;
+      } else if (process.env.PING_ROLE_ID) {
+        mentionRole = `<@&${process.env.PING_ROLE_ID}>`;
+      }
+
+      // Match Local Asset Image
+      const lookupKey = eggName.toLowerCase().replace(/[^a-z0-9]/g, '');
+      let selectedImage = DEFAULT_ICON;
+      for (const [key, filename] of Object.entries(PET_IMAGES)) {
+        if (lookupKey.includes(key) || key.includes(lookupKey)) {
+          selectedImage = GITHUB_BASE + filename;
+          break;
+        }
+      }
+
+      const joinText = gameUrl ? `[👉 **Click Here to Join Server**](${gameUrl})` : '*Link not detected*';
+      const activeEmbed = new MessageEmbed()
+        .setTitle(`🥚 Rare Spawn: ${eggName} Egg`)
+        .setColor(embedColor)
+        .addFields(
+          { name: '📍 Location', value: `\`${location}\``, inline: true },
+          { name: '💵 Income', value: `\`${income}\``, inline: true },
+          { name: '⚡ Req. Speed', value: `\`${speed}\``, inline: true },
+          { name: '⏱️ Spawned', value: spawned, inline: true },
+          { name: '🔗 Quick Join', value: joinText, inline: false }
         )
-      );
+        .setThumbnail(selectedImage)
+        .setFooter({ text: 'Infine v1 • Steal An Egg Tracker' })
+        .setTimestamp();
+
+      const components = [];
+      if (gameUrl) {
+        components.push(
+          new MessageActionRow().addComponents(
+            new MessageButton()
+              .setLabel('Join Roblox Game')
+              .setStyle('LINK')
+              .setURL(gameUrl)
+          )
+        );
+      }
+
+      const postPayload = {
+        username: 'Infine v1',
+        embeds: [activeEmbed],
+        components: components.length > 0 ? components : [],
+        allowedMentions: { parse: ['roles', 'users'] }
+      };
+
+      if (mentionRole) {
+        postPayload.content = `${mentionRole} 🚨 **${rarityTier} Egg Spawned: ${eggName}!**`;
+      }
+
+      await eggWebhook.send(postPayload);
     }
-
-    const postPayload = {
-      username: 'Infine v1',
-      embeds: [activeEmbed],
-      components: components.length > 0 ? components : [],
-      allowedMentions: { parse: ['roles', 'users'] }
-    };
-
-    if (mentionRole) {
-      postPayload.content = `${mentionRole} 🚨 **${rarityTier} Egg Spawned: ${eggName}!**`;
-    }
-
-    // Send and leave permanent
-    await webhook.send(postPayload);
 
   } catch (err) {
     console.error('Tracker error:', err);
