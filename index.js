@@ -1,8 +1,8 @@
-const { Client, WebhookClient, MessageEmbed, MessageActionRow, MessageButton } = require('discord.js-selfbot-v13');
+const { Client, WebhookClient, MessageEmbed } = require('discord.js-selfbot-v13');
 const http = require('http');
 require('dotenv').config();
 
-// Keep-alive HTTP server for hosting health checks
+// Keep-alive HTTP server for Render web service
 http.createServer((req, res) => {
   res.writeHead(200);
   res.end('Infine v1 Multi-Tracker Active');
@@ -18,7 +18,7 @@ const eventWebhook = process.env.EVENT_WEBHOOK_URL ? new WebhookClient({ url: pr
 const SOURCE_CHANNEL_ID = process.env.SOURCE_CHANNEL_ID;
 const EVENT_SOURCE_CHANNEL_ID = process.env.EVENT_SOURCE_CHANNEL_ID;
 
-const GITHUB_BASE = 'https://raw.githubusercontent.com/infine17/infine-egg-tracker/main/';
+const GITHUB_BASE = '[https://raw.githubusercontent.com/infine17/infine-egg-tracker/main/](https://raw.githubusercontent.com/infine17/infine-egg-tracker/main/)';
 
 const PET_IMAGES = {
   'archangel': 'Arch%20Angel.jfif',
@@ -54,18 +54,18 @@ const PET_IMAGES = {
   'yeti': 'Yeti.jfif'
 };
 
-const DEFAULT_ICON = 'https://cdn-icons-png.flaticon.com/512/833/833593.png';
+const DEFAULT_ICON = '[https://cdn-icons-png.flaticon.com/512/833/833593.png](https://cdn-icons-png.flaticon.com/512/833/833593.png)';
 const seenMessages = new Set();
 
 client.on('ready', () => {
-  console.log(`Infine v1 Dispatch active as: ${client.user.tag}`);
+  console.log(`Infine v1 active as: ${client.user.tag}`);
 });
 
 client.on('messageCreate', async (message) => {
   if (message.channelId !== SOURCE_CHANNEL_ID && message.channelId !== EVENT_SOURCE_CHANNEL_ID) return;
   if (!message.embeds || message.embeds.length === 0) return;
 
-  // Deduplicate alerts
+  // Deduplicate incoming alerts
   if (seenMessages.has(message.id)) return;
   seenMessages.add(message.id);
   if (seenMessages.size > 150) {
@@ -77,7 +77,7 @@ client.on('messageCreate', async (message) => {
     const original = message.embeds[0];
 
     // ==========================================
-    // PIPELINE 1: EXPERIMENT & RIFT NOTIFICATIONS
+    // PIPELINE 1: EXPERIMENT & RIFT EVENTS
     // ==========================================
     if (message.channelId === EVENT_SOURCE_CHANNEL_ID) {
       if (!eventWebhook) return;
@@ -106,28 +106,26 @@ client.on('messageCreate', async (message) => {
       }
 
       const isExperiment = (original.title || '').toLowerCase().includes('experiment') || rawText.toLowerCase().includes('experiment');
-      const embedColor = isExperiment ? 0x00FF88 : 0xA855F7;
+      const embedColor = isExperiment ? 0x00FF88 : 0x9B59B6;
 
-      // Clean raw text
-      let cleanText = rawText.replace(/<a?:[a-zA-Z0-9_]+:[0-9]+>/g, '').replace(/\*\*/g, '').replace(/__/g, '');
-
-      // Parse Experiment & Timer data
-      const expMatch = cleanText.match(/([A-Za-z0-9\.\s]+?)\s+Experiment\s+has\s+appeared/i);
+      // Extract Event Name
+      const expMatch = rawText.match(/([A-Za-z0-9\.\s]+?)\s+Experiment\s+has\s+appeared/i);
       const experimentName = expMatch ? expMatch[1].trim() : 'Dr. Scramble';
 
-      const timerMatch = cleanText.match(/(?:Next\s+experiment\s+in|Next\s+Change):\s*([^\n\r]+)/i);
-      const nextTimer = timerMatch ? timerMatch[1].trim() : 'Active Now';
+      // Extract Raw Discord Timestamp (DO NOT WRAP IN BACKTICKS)
+      const timerMatch = rawText.match(/(?:Next\s+experiment\s+in|Next\s+Change):\s*([^\n\r]+)/i);
+      let nextTimer = timerMatch ? timerMatch[1].trim() : 'Active Now';
 
-      const joinText = gameUrl ? `[👉 **Click Here to Join Server**](${gameUrl})` : '*Link not detected*';
+      // Clean mobile join CTA
+      const joinText = gameUrl ? `>>> 🚀 [**TAP HERE TO JOIN SERVER**](${gameUrl})` : '*Link not detected*';
 
-      // 2. Build Upgraded Embed UI
       const eventEmbed = new MessageEmbed()
         .setTitle(isExperiment ? `🧪 A Forbidden Experiment Has Appeared!` : `🌀 Rift Dimension Shift`)
         .setColor(embedColor)
         .setFooter({ text: 'Infine v1 • Steal An Egg Event Dispatch' })
         .setTimestamp();
 
-      // Maintain the exact original asset from the source
+      // Use source image asset
       if (original.thumbnail && original.thumbnail.url) {
         eventEmbed.setThumbnail(original.thumbnail.url);
       } else if (original.image && original.image.url) {
@@ -138,32 +136,48 @@ client.on('messageCreate', async (message) => {
         eventEmbed.addFields(
           { name: '🧪 Experiment', value: `\`${experimentName}\``, inline: true },
           { name: '⚡ Status', value: '`🟢 ACTIVE NOW`', inline: true },
-          { name: '⏳ Next Experiment', value: `\`${nextTimer}\``, inline: true },
-          { name: '🔗 Quick Join', value: joinText, inline: false }
+          { name: '⏳ Next Experiment', value: nextTimer, inline: false }, // No backticks: enables native Discord countdown
+          { name: '🔗 Quick Teleport', value: joinText, inline: false }
         );
       } else {
-        const petsMatch = cleanText.match(/Possible\s+Pets:?([\s\S]*?)(?:Join\s+Game|$)/i);
-        const petsText = petsMatch ? petsMatch[1].trim() : 'Check in-game dimension portal';
+        // Parse pet drop list into clean Discord quotes
+        const petsMatch = rawText.match(/Possible\s+Pets:?([\s\S]*?)(?:Join\s+Game|Next|$)/i);
+        let formattedDrops = '';
+        if (petsMatch) {
+          const lines = petsMatch[1].trim().split('\n');
+          formattedDrops = lines
+            .map(l => {
+              let cleaned = l.replace(/<a?:[a-zA-Z0-9_]+:[0-9]+>/g, '').replace(/[\*\_'`]/g, '').trim();
+              return cleaned ? `> ${cleaned}` : null;
+            })
+            .filter(Boolean)
+            .join('\n');
+        }
+        if (!formattedDrops) formattedDrops = '> *Check in-game dimension portal*';
 
         eventEmbed.addFields(
-          { name: '⏳ Next Change', value: `\`${nextTimer}\``, inline: true },
-          { name: '⚡ Dimension', value: '`🟣 STABLE`', inline: true },
-          { name: '📦 Possible Drops', value: `\`\`\`yaml\n${petsText.substring(0, 450)}\n\`\`\``, inline: false },
-          { name: '🔗 Quick Join', value: joinText, inline: false }
+          { name: '🌀 Dimension', value: '`🟣 STABLE`', inline: true },
+          { name: '⚡ Status', value: '`🟢 OPEN NOW`', inline: true },
+          { name: '⏳ Next Dimension Shift', value: nextTimer, inline: false }, // No backticks: live timer
+          { name: '📦 Possible Drops', value: formattedDrops, inline: false },
+          { name: '🔗 Quick Teleport', value: joinText, inline: false }
         );
       }
 
-      // 3. Attach Direct Interactive Teleport Button
+      // Raw action-row payload for universal mobile support
       const components = [];
       if (gameUrl) {
-        components.push(
-          new MessageActionRow().addComponents(
-            new MessageButton()
-              .setLabel(isExperiment ? '🧪 Teleport to Experiment' : '🌀 Teleport to Rift')
-              .setStyle('LINK')
-              .setURL(gameUrl)
-          )
-        );
+        components.push({
+          type: 1,
+          components: [
+            {
+              type: 2,
+              style: 5,
+              label: isExperiment ? '🧪 Join Experiment Server' : '🌀 Teleport to Rift',
+              url: gameUrl
+            }
+          ]
+        });
       }
 
       const postPayload = {
@@ -174,7 +188,7 @@ client.on('messageCreate', async (message) => {
       };
 
       if (process.env.EVENT_ROLE_ID) {
-        postPayload.content = `<@&${process.env.EVENT_ROLE_ID}> 🚨 **${isExperiment ? `Forbidden Experiment Detected: ${experimentName}!` : 'Rift Event Shift!'}**`;
+        postPayload.content = `<@&${process.env.EVENT_ROLE_ID}> 🚨 **${isExperiment ? `Forbidden Experiment: ${experimentName}!` : 'Rift Event Shift!'}**`;
       }
 
       await eventWebhook.send(postPayload);
@@ -193,7 +207,7 @@ client.on('messageCreate', async (message) => {
         rawText += '\n' + original.fields.map(f => f.name + ': ' + f.value).join('\n');
       }
 
-      // Extract Join URL
+      // 1. Extract Roblox Link
       let gameUrl = null;
       if (message.components && message.components.length > 0) {
         for (const row of message.components) {
@@ -211,7 +225,7 @@ client.on('messageCreate', async (message) => {
         if (match) gameUrl = match[0];
       }
 
-      // Parse Egg Details
+      // 2. Parse Egg Details
       let cleanText = rawText.replace(/<a?:[a-zA-Z0-9_]+:[0-9]+>/g, '').replace(/\*\*/g, '').replace(/__/g, '');
       const eggMatch = cleanText.match(/(?:^|\n|[^\w])Egg:\s*([^\n\r]+)/i);
       const locMatch = cleanText.match(/Location:\s*([^\n\r]+)/i);
@@ -225,7 +239,7 @@ client.on('messageCreate', async (message) => {
       const income = moneyMatch ? moneyMatch[1].split(/recommended|speed/i)[0].trim() : 'N/A';
       const speed = speedMatch ? speedMatch[1].trim() : 'N/A';
 
-      // Rarity Determinations
+      // 3. Rarity Tiers & Dynamic Accent Colors
       let embedColor = '#FFFFFF';
       let rarityTier = 'Unknown';
       const titleLower = (original.title || '').toLowerCase();
@@ -253,7 +267,7 @@ client.on('messageCreate', async (message) => {
         mentionRole = `<@&${process.env.PING_ROLE_ID}>`;
       }
 
-      // Match Local Custom Asset
+      // 4. Match Local Asset Image
       const lookupKey = eggName.toLowerCase().replace(/[^a-z0-9]/g, '');
       let selectedImage = DEFAULT_ICON;
       for (const [key, filename] of Object.entries(PET_IMAGES)) {
@@ -263,7 +277,8 @@ client.on('messageCreate', async (message) => {
         }
       }
 
-      const joinText = gameUrl ? `[👉 **Click Here to Join Server**](${gameUrl})` : '*Link not detected*';
+      const joinText = gameUrl ? `>>> 🚀 [**TAP HERE TO JOIN SERVER**](${gameUrl})` : '*Link not detected*';
+
       const activeEmbed = new MessageEmbed()
         .setTitle(`🥚 Rare Spawn: ${eggName} Egg`)
         .setColor(embedColor)
@@ -272,7 +287,7 @@ client.on('messageCreate', async (message) => {
           { name: '💵 Income', value: `\`${income}\``, inline: true },
           { name: '⚡ Req. Speed', value: `\`${speed}\``, inline: true },
           { name: '⏱️ Spawned', value: spawned, inline: true },
-          { name: '🔗 Quick Join', value: joinText, inline: false }
+          { name: '🔗 Quick Teleport', value: joinText, inline: false }
         )
         .setThumbnail(selectedImage)
         .setFooter({ text: 'Infine v1 • Steal An Egg Tracker' })
@@ -280,14 +295,17 @@ client.on('messageCreate', async (message) => {
 
       const components = [];
       if (gameUrl) {
-        components.push(
-          new MessageActionRow().addComponents(
-            new MessageButton()
-              .setLabel('Join Roblox Game')
-              .setStyle('LINK')
-              .setURL(gameUrl)
-          )
-        );
+        components.push({
+          type: 1,
+          components: [
+            {
+              type: 2,
+              style: 5,
+              label: 'Join Roblox Game',
+              url: gameUrl
+            }
+          ]
+        });
       }
 
       const postPayload = {
